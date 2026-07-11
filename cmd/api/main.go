@@ -1,36 +1,83 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"log"
 	"net/http"
+	"time"
 
+	"github.com/Harkaso/gauthly/internal/config"
+	"github.com/Harkaso/gauthly/internal/platform/database"
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
-	port string = ":8080"
-	url  string = "http://localhost" + port
+	ctxTimeout = 20 * time.Second
 )
 
-func startServer() error {
+type StatusResponse struct {
+	Status string `json:"status"`
+}
+
+type ErrorResponse struct {
+	Error string `json:"error"`
+}
+
+func connectDB(connString string) (*pgxpool.Pool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), ctxTimeout)
+	defer cancel()
+
+	return database.Connect(ctx, connString)
+}
+
+func startServer(port string) error {
 	r := chi.NewRouter()
-	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
-		if _, err := w.Write([]byte("Hello, World!")); err != nil {
-			log.Printf("Failed to write response: %v", err)
+
+	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(StatusResponse{Status: "ok"}); err != nil {
+			log.Printf("Failed to write response: %v\n", err)
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 		}
 	})
+
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "Not Found", http.StatusNotFound)
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(ErrorResponse{Error: "not found"}); err != nil {
+			log.Printf("Failed to write response: %v\n", err)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+		}
 	})
 
 	return http.ListenAndServe(port, r)
 }
 
-func main() {
-	log.Printf("Server started on : %s\n", url)
-	err := startServer()
+func run() error {
+	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("Failed to start server: %v", err)
+		return err
+	}
+
+	dbPool, err := connectDB(cfg.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer dbPool.Close()
+
+	log.Printf("Server started on : http://localhost:%s\n", cfg.Port)
+	err = startServer(cfg.Port)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func main() {
+	err := run()
+	if err != nil {
+		log.Fatalf("Failed to run: %v\n", err)
 	}
 }

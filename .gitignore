@@ -96,9 +96,6 @@ cmake-build-*/
 # File-based project format
 *.iws
 
-# IntelliJ
-out/
-
 # mpeltonen/sbt-idea plugin
 .idea_modules/
 
@@ -121,12 +118,21 @@ fabric.properties
 .idea/caches/build_file_checksums.ser
 
 .vscode/*
+.zed/*
 *.code-workspace
 
 # Local History for Visual Studio Code
 .history/
 
-# User specific files
+# User specific
+AGENT.md
 CLAUDE.md
-docs/*
 PROGRESS.md
+TODO*
+.agent/*
+.claude/*
+docs/*
+bin/*
+build/*
+out/*
+temp/*

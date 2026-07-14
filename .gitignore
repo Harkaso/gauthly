@@ -127,8 +127,8 @@ fabric.properties
 # User specific
 AGENT.md
 CLAUDE.md
-PROGRESS.md
 TODO*
+*.txt
 .agent/*
 .claude/*
 docs/*

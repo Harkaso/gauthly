@@ -54,7 +54,6 @@ func EncryptSecret(plaintext, key, additionalData []byte) ([]byte, error) {
 	}
 
 	ciphertext := aead.Seal(nonce, nonce, plaintext, additionalData)
-
 	return ciphertext, nil
 }
 

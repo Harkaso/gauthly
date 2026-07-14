@@ -4,16 +4,19 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 )
 
 const (
-	defaultPort = ":8080"
+	defaultPort     = ":8080"
+	defaultTenantID = "00000000-0000-4000-8000-000000000000"
 )
 
 type Config struct {
-	DatabaseURL string
-	Port        string
+	DatabaseURL     string
+	Port            string
+	DefaultTenantID uuid.UUID
 }
 
 func Load() (*Config, error) {
@@ -28,6 +31,11 @@ func Load() (*Config, error) {
 	}
 
 	cfg.Port = lookupString("PORT", defaultPort)
+
+	cfg.DefaultTenantID, err = uuid.Parse(lookupString("DEFAULT_TENANT_ID", defaultTenantID))
+	if err != nil {
+		return nil, err
+	}
 
 	return cfg, nil
 }

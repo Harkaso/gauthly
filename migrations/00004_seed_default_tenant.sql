@@ -1,0 +1,6 @@
+-- +goose Up
+INSERT INTO tenants (id, name, slug)
+VALUES ('00000000-0000-4000-8000-000000000000', 'Default', 'default')
+ON CONFLICT DO NOTHING;
+-- +goose Down
+DELETE FROM tenants WHERE id = '00000000-0000-4000-8000-000000000000';

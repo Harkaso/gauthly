@@ -13,12 +13,16 @@ const (
 	defaultTenantID = "00000000-0000-4000-8000-000000000000"
 )
 
+// Config holds the settings the service needs to start.
 type Config struct {
 	DatabaseURL     string
 	Port            string
 	DefaultTenantID uuid.UUID
 }
 
+// Load reads the configuration from the environment. It fails if a required
+// variable is missing or if a value cannot be parsed. Optional values fall
+// back to their default.
 func Load() (*Config, error) {
 	_ = godotenv.Load()
 
@@ -34,7 +38,7 @@ func Load() (*Config, error) {
 
 	cfg.DefaultTenantID, err = uuid.Parse(lookupString("DEFAULT_TENANT_ID", defaultTenantID))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parse DEFAULT_TENANT_ID: %w", err)
 	}
 
 	return cfg, nil

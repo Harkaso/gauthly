@@ -1,6 +1,7 @@
 package crypto
 
 import (
+	"bytes"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -11,11 +12,23 @@ import (
 
 var password = []byte("TestP@ssw0rd")
 
-func TestSamePassword(t *testing.T) {
+func mustHash(t *testing.T, password []byte) string {
+	t.Helper()
+
 	hashed, err := HashPassword(password)
 	if err != nil {
 		t.Fatalf("Failed to hash password: %v", err)
 	}
+
+	return hashed
+}
+
+func formatPHC(algorithm, version, params, salt, hash string) string {
+	return fmt.Sprintf("$%s$%s$%s$%s$%s", algorithm, version, params, salt, hash)
+}
+
+func TestVerifyPasswordAcceptsMatchingPassword(t *testing.T) {
+	hashed := mustHash(t, password)
 
 	ok, err := VerifyPassword(password, hashed)
 	if err != nil {
@@ -26,33 +39,10 @@ func TestSamePassword(t *testing.T) {
 	}
 }
 
-func TestSamePasswordDifferentSalt(t *testing.T) {
-	hash1, err := HashPassword(password)
-	if err != nil {
-		t.Fatalf("Failed to hash password: %v", err)
-	}
+func TestVerifyPasswordRejectsWrongPassword(t *testing.T) {
+	hashed := mustHash(t, []byte("TestP@ssw0rd1"))
 
-	hash2, err := HashPassword(password)
-	if err != nil {
-		t.Fatalf("Failed to hash password: %v", err)
-	}
-
-	if hash1 == hash2 {
-		t.Error("HashPassword() produced identical hashes, want unique per call")
-	}
-}
-
-func TestDifferentPassword(t *testing.T) {
-	password1 := []byte("TestP@ssw0rd1")
-
-	hashed1, err := HashPassword(password1)
-	if err != nil {
-		t.Fatalf("Failed to hash password: %v", err)
-	}
-
-	password2 := []byte("TestP@ssw0rd2")
-
-	ok, err := VerifyPassword(password2, hashed1)
+	ok, err := VerifyPassword([]byte("TestP@ssw0rd2"), hashed)
 	if err != nil {
 		t.Fatalf("Failed to verify password: %v", err)
 	}
@@ -61,10 +51,50 @@ func TestDifferentPassword(t *testing.T) {
 	}
 }
 
-func TestBadPHCStringFormat(t *testing.T) {
-	salt := []byte("<|testing-salt|>")
+func TestHashPasswordProducesUniqueHashes(t *testing.T) {
+	hash1 := mustHash(t, password)
+	hash2 := mustHash(t, password)
 
+	if hash1 == hash2 {
+		t.Error("HashPassword() produced identical hashes, want unique per call")
+	}
+}
+
+func TestVerifyPasswordUsesStoredCosts(t *testing.T) {
+	const (
+		storedMCost = 32 * 1024
+		storedTCost = 2
+		storedPCost = 1
+	)
+
+	salt := bytes.Repeat([]byte("s"), saltLength)
+	hash := argon2.IDKey(password, salt, storedTCost, storedMCost, storedPCost, hashLength)
+
+	phc := formatPHC(
+		algorithmName,
+		fmt.Sprintf("v=%d", argon2Version),
+		fmt.Sprintf("m=%d,t=%d,p=%d", storedMCost, storedTCost, storedPCost),
+		base64.RawStdEncoding.EncodeToString(salt),
+		base64.RawStdEncoding.EncodeToString(hash),
+	)
+
+	ok, err := VerifyPassword(password, phc)
+	if err != nil {
+		t.Fatalf("Failed to verify password: %v", err)
+	}
+	if !ok {
+		t.Errorf("VerifyPassword() = %v, want true", ok)
+	}
+}
+
+func TestVerifyPasswordRejectsMalformedPHCString(t *testing.T) {
+	salt := []byte("<|testing-salt|>")
 	hash := argon2.IDKey(password, salt, tCost, mCost, pCost, hashLength)
+
+	version := fmt.Sprintf("v=%d", argon2Version)
+	params := fmt.Sprintf("m=%d,t=%d,p=%d", mCost, tCost, pCost)
+	encodedSalt := base64.RawStdEncoding.EncodeToString(salt)
+	encodedHash := base64.RawStdEncoding.EncodeToString(hash)
 
 	tests := []struct {
 		name string
@@ -72,102 +102,24 @@ func TestBadPHCStringFormat(t *testing.T) {
 	}{
 		{"EmptyString", ""},
 		{"NotPHCString", "this is not a PHC string"},
-		{"BadAlgorithmName", fmt.Sprintf("$%s$v=%d$m=%d,t=%d,p=%d$%s$%s",
-			"argon2", argon2Version, mCost,
-			tCost, pCost,
-			base64.RawStdEncoding.EncodeToString(salt),
-			base64.RawStdEncoding.EncodeToString(hash),
-		)},
-		{"NoAlgorithmName", fmt.Sprintf("$$v=%d$m=%d,t=%d,p=%d$%s$%s",
-			argon2Version, mCost, tCost, pCost,
-			base64.RawStdEncoding.EncodeToString(salt),
-			base64.RawStdEncoding.EncodeToString(hash),
-		)},
-		{"BadAlgorithmVersion", fmt.Sprintf("$%s$v=%d$m=%d,t=%d,p=%d$%s$%s",
-			algorithmName, argon2Version-2, mCost,
-			tCost, pCost,
-			base64.RawStdEncoding.EncodeToString(salt),
-			base64.RawStdEncoding.EncodeToString(hash),
-		)},
-		{"NoAlgorithmVersion", fmt.Sprintf("$%s$v=$m=%d,t=%d,p=%d$%s$%s",
-			algorithmName, mCost, tCost, pCost,
-			base64.RawStdEncoding.EncodeToString(salt),
-			base64.RawStdEncoding.EncodeToString(hash),
-		)},
-		{"BadAlgorithmVersionFormat", fmt.Sprintf("$%s$v=v$m=%d,t=%d,p=%d$%s$%s",
-			algorithmName, mCost, tCost, pCost,
-			base64.RawStdEncoding.EncodeToString(salt),
-			base64.RawStdEncoding.EncodeToString(hash),
-		)},
-		{"NoMemoryCost", fmt.Sprintf("$%s$v=%d$m=,t=%d,p=%d$%s$%s",
-			algorithmName, argon2Version, tCost, pCost,
-			base64.RawStdEncoding.EncodeToString(salt),
-			base64.RawStdEncoding.EncodeToString(hash),
-		)},
-		{"BadMemoryCostFormat", fmt.Sprintf("$%s$v=%d$m=m,t=%d,p=%d$%s$%s",
-			algorithmName, argon2Version, tCost, pCost,
-			base64.RawStdEncoding.EncodeToString(salt),
-			base64.RawStdEncoding.EncodeToString(hash),
-		)},
-		{"NoTimeCost", fmt.Sprintf("$%s$v=%d$m=%d,t=,p=%d$%s$%s",
-			algorithmName, argon2Version, mCost, pCost,
-			base64.RawStdEncoding.EncodeToString(salt),
-			base64.RawStdEncoding.EncodeToString(hash),
-		)},
-		{"BadTimeCostFormat", fmt.Sprintf("$%s$v=%d$m=%d,t=t,p=%d$%s$%s",
-			algorithmName, argon2Version, mCost, pCost,
-			base64.RawStdEncoding.EncodeToString(salt),
-			base64.RawStdEncoding.EncodeToString(hash),
-		)},
-		{"NoThreadCost", fmt.Sprintf("$%s$v=%d$m=%d,t=%d,p=$%s$%s",
-			algorithmName, argon2Version, mCost, tCost,
-			base64.RawStdEncoding.EncodeToString(salt),
-			base64.RawStdEncoding.EncodeToString(hash),
-		)},
-		{"BadThreadCostFormat", fmt.Sprintf("$%s$v=%d$m=%d,t=%d,p=p$%s$%s",
-			algorithmName, argon2Version, mCost, tCost,
-			base64.RawStdEncoding.EncodeToString(salt),
-			base64.RawStdEncoding.EncodeToString(hash),
-		)},
-		{"NoBase64SaltEncoding", fmt.Sprintf("$%s$v=%d$m=%d,t=%d,p=%d$%s$%s",
-			algorithmName, argon2Version, mCost,
-			tCost, pCost, salt,
-			base64.RawStdEncoding.EncodeToString(hash),
-		)},
-		{"NoSalt", fmt.Sprintf("$%s$v=%d$m=%d,t=%d,p=%d$$%s",
-			algorithmName, argon2Version, mCost,
-			tCost, pCost,
-			base64.RawStdEncoding.EncodeToString(hash),
-		)},
-		{"TooShortSalt", fmt.Sprintf("$%s$v=%d$m=%d,t=%d,p=%d$%s$%s",
-			algorithmName, argon2Version, mCost,
-			tCost, pCost,
-			base64.RawStdEncoding.EncodeToString([]byte("salt")),
-			base64.RawStdEncoding.EncodeToString(hash),
-		)},
-		{"NoBase64HashEncoding", fmt.Sprintf("$%s$v=%d$m=%d,t=%d,p=%d$%s$%s",
-			algorithmName, argon2Version, mCost,
-			tCost, pCost,
-			base64.RawStdEncoding.EncodeToString(salt),
-			"<--------|testing-hash|-------->",
-		)},
-		{"NoHash", fmt.Sprintf("$%s$v=%d$m=%d,t=%d,p=%d$%s$",
-			algorithmName, argon2Version, mCost,
-			tCost, pCost,
-			base64.RawStdEncoding.EncodeToString(salt),
-		)},
-		{"TooShortHash", fmt.Sprintf("$%s$v=%d$m=%d,t=%d,p=%d$%s$%s",
-			algorithmName, argon2Version, mCost,
-			tCost, pCost,
-			base64.RawStdEncoding.EncodeToString(salt),
-			base64.RawStdEncoding.EncodeToString([]byte("hash")),
-		)},
-		{"BadPHCStringFormat", fmt.Sprintf("$%s$v=%d$m=%d$t=%d$p=%d$%s$%s",
-			algorithmName, argon2Version, mCost,
-			tCost, pCost,
-			base64.RawStdEncoding.EncodeToString(salt),
-			base64.RawStdEncoding.EncodeToString(hash),
-		)},
+		{"BadAlgorithmName", formatPHC("argon2", version, params, encodedSalt, encodedHash)},
+		{"NoAlgorithmName", formatPHC("", version, params, encodedSalt, encodedHash)},
+		{"BadAlgorithmVersion", formatPHC(algorithmName, fmt.Sprintf("v=%d", argon2Version-2), params, encodedSalt, encodedHash)},
+		{"NoAlgorithmVersion", formatPHC(algorithmName, "v=", params, encodedSalt, encodedHash)},
+		{"BadAlgorithmVersionFormat", formatPHC(algorithmName, "v=v", params, encodedSalt, encodedHash)},
+		{"NoMemoryCost", formatPHC(algorithmName, version, fmt.Sprintf("m=,t=%d,p=%d", tCost, pCost), encodedSalt, encodedHash)},
+		{"BadMemoryCostFormat", formatPHC(algorithmName, version, fmt.Sprintf("m=m,t=%d,p=%d", tCost, pCost), encodedSalt, encodedHash)},
+		{"NoTimeCost", formatPHC(algorithmName, version, fmt.Sprintf("m=%d,t=,p=%d", mCost, pCost), encodedSalt, encodedHash)},
+		{"BadTimeCostFormat", formatPHC(algorithmName, version, fmt.Sprintf("m=%d,t=t,p=%d", mCost, pCost), encodedSalt, encodedHash)},
+		{"NoThreadCost", formatPHC(algorithmName, version, fmt.Sprintf("m=%d,t=%d,p=", mCost, tCost), encodedSalt, encodedHash)},
+		{"BadThreadCostFormat", formatPHC(algorithmName, version, fmt.Sprintf("m=%d,t=%d,p=p", mCost, tCost), encodedSalt, encodedHash)},
+		{"NoBase64SaltEncoding", formatPHC(algorithmName, version, params, string(salt), encodedHash)},
+		{"NoSalt", formatPHC(algorithmName, version, params, "", encodedHash)},
+		{"TooShortSalt", formatPHC(algorithmName, version, params, base64.RawStdEncoding.EncodeToString([]byte("salt")), encodedHash)},
+		{"NoBase64HashEncoding", formatPHC(algorithmName, version, params, encodedSalt, "<--------|testing-hash|-------->")},
+		{"NoHash", formatPHC(algorithmName, version, params, encodedSalt, "")},
+		{"TooShortHash", formatPHC(algorithmName, version, params, encodedSalt, base64.RawStdEncoding.EncodeToString([]byte("hash")))},
+		{"TooManyFields", fmt.Sprintf("$%s$%s$m=%d$t=%d$p=%d$%s$%s", algorithmName, version, mCost, tCost, pCost, encodedSalt, encodedHash)},
 	}
 
 	for _, tt := range tests {

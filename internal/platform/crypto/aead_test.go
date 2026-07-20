@@ -12,7 +12,37 @@ var (
 	additionalData = []byte("00000000-0000-4000-8000-000000000000")
 )
 
-func TestValidAEADWithoutAdditionalData(t *testing.T) {
+var additionalDataCases = []struct {
+	name string
+	aad  []byte
+}{
+	{"WithoutAdditionalData", nil},
+	{"WithAdditionalData", additionalData},
+}
+
+var badKeyCases = []struct {
+	name string
+	key  []byte
+}{
+	{"NilKey", nil},
+	{"EmptyKey", []byte{}},
+	{"KeyOf16", make([]byte, 16)},
+	{"KeyOf24", make([]byte, 24)},
+	{"KeyOf33", make([]byte, 33)},
+}
+
+func mustEncrypt(t *testing.T, plaintext, key, additionalData []byte) []byte {
+	t.Helper()
+
+	ciphertext, err := EncryptSecret(plaintext, key, additionalData)
+	if err != nil {
+		t.Fatalf("Failed to encrypt secret: %v", err)
+	}
+
+	return ciphertext
+}
+
+func TestDecryptSecretReturnsOriginalPlaintext(t *testing.T) {
 	tests := []struct {
 		name string
 		text []byte
@@ -24,162 +54,74 @@ func TestValidAEADWithoutAdditionalData(t *testing.T) {
 		{"PlaintextOf1000", bytes.Repeat([]byte("0"), 1000)},
 		{"PlaintextOf10000", bytes.Repeat([]byte("0"), 10000)},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ciphertext, err := EncryptSecret(tt.text, key, nil)
-			if err != nil {
-				t.Fatalf("Failed to encrypt secret: %v", err)
-			}
-			deciphered, err := DecryptSecret(ciphertext, key, nil)
-			if err != nil {
-				t.Fatalf("Failed to decrypt secret: %v", err)
-			}
-			if !bytes.Equal(deciphered, tt.text) {
-				t.Error("DecryptSecret() output does not match original plaintext")
+
+	for _, ad := range additionalDataCases {
+		t.Run(ad.name, func(t *testing.T) {
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					ciphertext := mustEncrypt(t, tt.text, key, ad.aad)
+
+					deciphered, err := DecryptSecret(ciphertext, key, ad.aad)
+					if err != nil {
+						t.Fatalf("Failed to decrypt secret: %v", err)
+					}
+					if !bytes.Equal(deciphered, tt.text) {
+						t.Error("DecryptSecret() output does not match original plaintext")
+					}
+				})
 			}
 		})
 	}
 }
 
-func TestValidAEADWithAdditionalData(t *testing.T) {
+func TestEncryptSecretProducesUniqueCiphertexts(t *testing.T) {
+	for _, ad := range additionalDataCases {
+		t.Run(ad.name, func(t *testing.T) {
+			ciphertext1 := mustEncrypt(t, plaintext, key, ad.aad)
+			ciphertext2 := mustEncrypt(t, plaintext, key, ad.aad)
+
+			if bytes.Equal(ciphertext1, ciphertext2) {
+				t.Error("EncryptSecret() produced identical ciphertexts, want unique")
+			}
+		})
+	}
+}
+
+func TestDecryptSecretRejectsWrongKey(t *testing.T) {
+	wrongKey := make([]byte, len(key))
+	copy(wrongKey, key)
+	wrongKey[len(wrongKey)-1] ^= '0'
+
+	for _, ad := range additionalDataCases {
+		t.Run(ad.name, func(t *testing.T) {
+			ciphertext := mustEncrypt(t, plaintext, key, ad.aad)
+
+			_, err := DecryptSecret(ciphertext, wrongKey, ad.aad)
+			if !errors.Is(err, ErrDecryptFailed) {
+				t.Errorf("DecryptSecret() error = %v, want %v", err, ErrDecryptFailed)
+			}
+		})
+	}
+}
+
+func TestDecryptSecretRejectsWrongAdditionalData(t *testing.T) {
+	alteredAdditionalData := make([]byte, len(additionalData))
+	copy(alteredAdditionalData, additionalData)
+	alteredAdditionalData[len(alteredAdditionalData)-1] = '1'
+
+	ciphertext := mustEncrypt(t, plaintext, key, additionalData)
+
 	tests := []struct {
 		name string
-		text []byte
+		aad  []byte
 	}{
-		{"BasicPlaintext", plaintext},
-		{"PlaintextOf1", []byte("0")},
-		{"PlaintextOf50", bytes.Repeat([]byte("0"), 50)},
-		{"PlaintextOf100", bytes.Repeat([]byte("0"), 100)},
-		{"PlaintextOf1000", bytes.Repeat([]byte("0"), 1000)},
-		{"PlaintextOf10000", bytes.Repeat([]byte("0"), 10000)},
+		{"MissingAdditionalData", nil},
+		{"AlteredAdditionalData", alteredAdditionalData},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ciphertext, err := EncryptSecret(tt.text, key, additionalData)
-			if err != nil {
-				t.Fatalf("Failed to encrypt secret: %v", err)
-			}
-			deciphered, err := DecryptSecret(ciphertext, key, additionalData)
-			if err != nil {
-				t.Fatalf("Failed to decrypt secret: %v", err)
-			}
-			if !bytes.Equal(deciphered, tt.text) {
-				t.Error("DecryptSecret() output does not match original plaintext")
-			}
-		})
-	}
-}
-
-func TestUniqueCiphertextWithoutAdditionalData(t *testing.T) {
-	ciphertext1, err := EncryptSecret(plaintext, key, nil)
-	if err != nil {
-		t.Fatalf("Failed to encrypt secret: %v", err)
-	}
-	ciphertext2, err := EncryptSecret(plaintext, key, nil)
-	if err != nil {
-		t.Fatalf("Failed to encrypt secret: %v", err)
-	}
-
-	if bytes.Equal(ciphertext1, ciphertext2) {
-		t.Error("EncryptSecret() produced identical ciphertexts, want unique")
-	}
-}
-
-func TestUniqueCiphertextWithAdditionalData(t *testing.T) {
-	ciphertext1, err := EncryptSecret(plaintext, key, additionalData)
-	if err != nil {
-		t.Fatalf("Failed to encrypt secret: %v", err)
-	}
-	ciphertext2, err := EncryptSecret(plaintext, key, additionalData)
-	if err != nil {
-		t.Fatalf("Failed to encrypt secret: %v", err)
-	}
-
-	if bytes.Equal(ciphertext1, ciphertext2) {
-		t.Error("EncryptSecret() produced identical ciphertexts, want unique")
-	}
-}
-
-func TestWrongKeyWithoutAdditionalData(t *testing.T) {
-	key2 := make([]byte, len(key))
-	copy(key2, key)
-	key2[len(key2)-1] ^= '0'
-
-	ciphertext, err := EncryptSecret(plaintext, key, nil)
-	if err != nil {
-		t.Fatalf("Failed to encrypt secret: %v", err)
-	}
-	_, err = DecryptSecret(ciphertext, key2, nil)
-	if !errors.Is(err, ErrDecryptFailed) {
-		t.Errorf("DecryptSecret() error = %v, want %v", err, ErrDecryptFailed)
-	}
-}
-
-func TestWrongKeyWithAdditionalData(t *testing.T) {
-	key2 := make([]byte, len(key))
-	copy(key2, key)
-	key2[len(key2)-1] ^= '0'
-
-	ciphertext, err := EncryptSecret(plaintext, key, additionalData)
-	if err != nil {
-		t.Fatalf("Failed to encrypt secret: %v", err)
-	}
-	_, err = DecryptSecret(ciphertext, key2, additionalData)
-	if !errors.Is(err, ErrDecryptFailed) {
-		t.Errorf("DecryptSecret() error = %v, want %v", err, ErrDecryptFailed)
-	}
-}
-
-func TestWrongAdditionalData(t *testing.T) {
-	additionalData2 := make([]byte, len(additionalData))
-	copy(additionalData2, additionalData)
-	additionalData2[len(additionalData2)-1] = '1'
-
-	ciphertext, err := EncryptSecret(plaintext, key, additionalData)
-	if err != nil {
-		t.Fatalf("Failed to encrypt secret: %v", err)
-	}
-
-	_, err = DecryptSecret(ciphertext, key, nil)
-	if !errors.Is(err, ErrDecryptFailed) {
-		t.Errorf("DecryptSecret() error = %v, want %v", err, ErrDecryptFailed)
-	}
-
-	_, err = DecryptSecret(ciphertext, key, additionalData2)
-	if !errors.Is(err, ErrDecryptFailed) {
-		t.Errorf("DecryptSecret() error = %v, want %v", err, ErrDecryptFailed)
-	}
-}
-
-func TestTamperedCiphertextWithoutAdditionalData(t *testing.T) {
-	ciphertext, err := EncryptSecret(plaintext, key, nil)
-	if err != nil {
-		t.Fatalf("Failed to encrypt secret: %v", err)
-	}
-
-	badCipherNonce := make([]byte, len(ciphertext))
-	copy(badCipherNonce, ciphertext)
-	badCipherNonce[0] ^= 1
-
-	badCipherBody := make([]byte, len(ciphertext))
-	copy(badCipherBody, ciphertext)
-	badCipherBody[13] ^= 1
-
-	badCipherTag := make([]byte, len(ciphertext))
-	copy(badCipherTag, ciphertext)
-	badCipherTag[len(ciphertext)-1] ^= 1
-
-	tests := []struct {
-		name       string
-		ciphertext []byte
-	}{
-		{"BadNoncePart", badCipherNonce},
-		{"BadBodyPart", badCipherBody},
-		{"BadTagPart", badCipherTag},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := DecryptSecret(tt.ciphertext, key, nil)
+			_, err := DecryptSecret(ciphertext, key, tt.aad)
 			if !errors.Is(err, ErrDecryptFailed) {
 				t.Errorf("DecryptSecret() error = %v, want %v", err, ErrDecryptFailed)
 			}
@@ -187,51 +129,46 @@ func TestTamperedCiphertextWithoutAdditionalData(t *testing.T) {
 	}
 }
 
-func TestTamperedCiphertextWithAdditionalData(t *testing.T) {
-	ciphertext, err := EncryptSecret(plaintext, key, additionalData)
-	if err != nil {
-		t.Fatalf("Failed to encrypt secret: %v", err)
-	}
+func TestDecryptSecretRejectsTamperedCiphertext(t *testing.T) {
+	for _, ad := range additionalDataCases {
+		t.Run(ad.name, func(t *testing.T) {
+			ciphertext := mustEncrypt(t, plaintext, key, ad.aad)
 
-	badCipherNonce := make([]byte, len(ciphertext))
-	copy(badCipherNonce, ciphertext)
-	badCipherNonce[0] ^= 1
+			tests := []struct {
+				name  string
+				index int
+			}{
+				{"TamperedNonce", 0},
+				{"TamperedBody", 13},
+				{"TamperedTag", len(ciphertext) - 1},
+			}
 
-	badCipherBody := make([]byte, len(ciphertext))
-	copy(badCipherBody, ciphertext)
-	badCipherBody[13] ^= 1
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					tampered := make([]byte, len(ciphertext))
+					copy(tampered, ciphertext)
+					tampered[tt.index] ^= 1
 
-	badCipherTag := make([]byte, len(ciphertext))
-	copy(badCipherTag, ciphertext)
-	badCipherTag[len(ciphertext)-1] ^= 1
-
-	tests := []struct {
-		name       string
-		ciphertext []byte
-	}{
-		{"BadNoncePart", badCipherNonce},
-		{"BadBodyPart", badCipherBody},
-		{"BadTagPart", badCipherTag},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := DecryptSecret(tt.ciphertext, key, additionalData)
-			if !errors.Is(err, ErrDecryptFailed) {
-				t.Errorf("DecryptSecret() error = %v, want %v", err, ErrDecryptFailed)
+					_, err := DecryptSecret(tampered, key, ad.aad)
+					if !errors.Is(err, ErrDecryptFailed) {
+						t.Errorf("DecryptSecret() error = %v, want %v", err, ErrDecryptFailed)
+					}
+				})
 			}
 		})
 	}
 }
 
-func TestBadCipherLength(t *testing.T) {
+func TestDecryptSecretRejectsShortCiphertext(t *testing.T) {
 	tests := []struct {
 		name       string
 		ciphertext []byte
 	}{
-		{"NilCipher", nil},
-		{"EmptyCipher", []byte{}},
-		{"BelowThreshold", make([]byte, 27)},
+		{"NilCiphertext", nil},
+		{"EmptyCiphertext", []byte{}},
+		{"BelowMinimumLength", make([]byte, 27)},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := DecryptSecret(tt.ciphertext, key, nil)
@@ -242,15 +179,16 @@ func TestBadCipherLength(t *testing.T) {
 	}
 }
 
-func TestCipherAtMinimumLength(t *testing.T) {
-	atThreshold := make([]byte, 28)
-	_, err := DecryptSecret(atThreshold, key, nil)
+func TestDecryptSecretRejectsCiphertextAtMinimumLength(t *testing.T) {
+	atMinimumLength := make([]byte, 28)
+
+	_, err := DecryptSecret(atMinimumLength, key, nil)
 	if !errors.Is(err, ErrDecryptFailed) {
 		t.Errorf("DecryptSecret() error = %v, want %v", err, ErrDecryptFailed)
 	}
 }
 
-func TestEmptyPlaintext(t *testing.T) {
+func TestEncryptSecretRejectsEmptyPlaintext(t *testing.T) {
 	tests := []struct {
 		name string
 		text []byte
@@ -258,6 +196,7 @@ func TestEmptyPlaintext(t *testing.T) {
 		{"NilPlaintext", nil},
 		{"EmptyPlaintext", []byte{}},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := EncryptSecret(tt.text, key, nil)
@@ -268,34 +207,22 @@ func TestEmptyPlaintext(t *testing.T) {
 	}
 }
 
-func TestBadKeyLength(t *testing.T) {
-	tests := []struct {
-		name string
-		key  []byte
-	}{
-		{"NilKey", nil},
-		{"EmptyKey", []byte{}},
-		{"KeyOf16", make([]byte, 16)},
-		{"KeyOf24", make([]byte, 24)},
-		{"KeyOf33", make([]byte, 33)},
-	}
-
-	for _, tt := range tests {
-		t.Run("Encrypt_"+tt.name, func(t *testing.T) {
+func TestEncryptSecretRejectsBadKeyLength(t *testing.T) {
+	for _, tt := range badKeyCases {
+		t.Run(tt.name, func(t *testing.T) {
 			_, err := EncryptSecret(plaintext, tt.key, nil)
 			if !errors.Is(err, ErrInvalidParamLength) {
 				t.Errorf("EncryptSecret() error = %v, want %v", err, ErrInvalidParamLength)
 			}
 		})
 	}
+}
 
-	ciphertext, err := EncryptSecret(plaintext, key, nil)
-	if err != nil {
-		t.Fatalf("Failed to encrypt secret: %v", err)
-	}
+func TestDecryptSecretRejectsBadKeyLength(t *testing.T) {
+	ciphertext := mustEncrypt(t, plaintext, key, nil)
 
-	for _, tt := range tests {
-		t.Run("Decrypt_"+tt.name, func(t *testing.T) {
+	for _, tt := range badKeyCases {
+		t.Run(tt.name, func(t *testing.T) {
 			_, err := DecryptSecret(ciphertext, tt.key, nil)
 			if !errors.Is(err, ErrInvalidParamLength) {
 				t.Errorf("DecryptSecret() error = %v, want %v", err, ErrInvalidParamLength)

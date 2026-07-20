@@ -127,8 +127,9 @@ func HashPassword(password []byte) (string, error) {
 	return toPHCString(salt, hash), nil
 }
 
-// VerifyPassword reports whether password matches the argon2id hash encoded in phcStr,
-// using a constant-time comparison. It returns ErrInvalidPHCString if phcStr is malformed.
+// VerifyPassword reports whether password matches the argon2id hash encoded
+// in phcStr, using a constant-time comparison.
+// It returns ErrInvalidPHCString if phcStr is malformed.
 func VerifyPassword(password []byte, phcStr string) (bool, error) {
 	parsedPHC, err := parsePHCString(phcStr)
 	if err != nil {

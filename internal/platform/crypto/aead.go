@@ -10,8 +10,8 @@ import (
 
 const aes256KeySize = 32
 
-// ErrDecryptFailed indicates that the ciphertext could not be authenticated and decrypted,
-// because it was tampered with or the key or additional data
+// ErrDecryptFailed indicates that the ciphertext could not be authenticated
+// and decrypted, because it was tampered with or the key or additional data
 // does not match the one used for encryption.
 var ErrDecryptFailed = errors.New("decrypt failed")
 
@@ -35,8 +35,8 @@ func newGCM(key []byte) (cipher.AEAD, error) {
 
 // EncryptSecret encrypts plaintext with AES-256-GCM and returns the 12-byte nonce
 // prepended to the ciphertext. key must be 32 bytes and plaintext must not be empty.
-// additionalData is authenticated but not encrypted, and the same value
-// must be supplied to DecryptSecret.
+// additionalData is authenticated but not encrypted, and the same value must
+// be supplied to DecryptSecret.
 func EncryptSecret(plaintext, key, additionalData []byte) ([]byte, error) {
 	if len(plaintext) == 0 {
 		return nil, ErrInvalidParamLength

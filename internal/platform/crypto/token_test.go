@@ -14,11 +14,20 @@ var (
 	publicKey  = privateKey.Public().(ed25519.PublicKey)
 )
 
-func TestValidToken(t *testing.T) {
-	sig, err := Sign(jwt, privateKey)
+func mustSign(t *testing.T, data []byte, privateKey ed25519.PrivateKey) []byte {
+	t.Helper()
+
+	sig, err := Sign(data, privateKey)
 	if err != nil {
 		t.Fatalf("Failed to sign token: %v", err)
 	}
+
+	return sig
+}
+
+func TestVerifySignatureAcceptsValidSignature(t *testing.T) {
+	sig := mustSign(t, jwt, privateKey)
+
 	ok, err := VerifySignature(jwt, sig, publicKey)
 	if err != nil {
 		t.Fatalf("Failed to verify signature: %v", err)
@@ -28,12 +37,10 @@ func TestValidToken(t *testing.T) {
 	}
 }
 
-func TestWrongPublicKey(t *testing.T) {
+func TestVerifySignatureRejectsWrongPublicKey(t *testing.T) {
 	wrongPublicKey := bytes.Repeat([]byte("1"), ed25519.PublicKeySize)
-	sig, err := Sign(jwt, privateKey)
-	if err != nil {
-		t.Fatalf("Failed to sign token: %v", err)
-	}
+	sig := mustSign(t, jwt, privateKey)
+
 	ok, err := VerifySignature(jwt, sig, wrongPublicKey)
 	if err != nil {
 		t.Fatalf("Failed to verify signature: %v", err)
@@ -43,11 +50,8 @@ func TestWrongPublicKey(t *testing.T) {
 	}
 }
 
-func TestTamperedData(t *testing.T) {
-	sig, err := Sign(jwt, privateKey)
-	if err != nil {
-		t.Fatalf("Failed to sign token: %v", err)
-	}
+func TestVerifySignatureRejectsTamperedData(t *testing.T) {
+	sig := mustSign(t, jwt, privateKey)
 
 	tamperedJWT := make([]byte, len(jwt))
 	copy(tamperedJWT, jwt)
@@ -62,11 +66,8 @@ func TestTamperedData(t *testing.T) {
 	}
 }
 
-func TestTamperedSignature(t *testing.T) {
-	sig, err := Sign(jwt, privateKey)
-	if err != nil {
-		t.Fatalf("Failed to sign token: %v", err)
-	}
+func TestVerifySignatureRejectsTamperedSignature(t *testing.T) {
+	sig := mustSign(t, jwt, privateKey)
 
 	tamperedSig := make([]byte, len(sig))
 	copy(tamperedSig, sig)
@@ -81,30 +82,8 @@ func TestTamperedSignature(t *testing.T) {
 	}
 }
 
-func TestEmptyData(t *testing.T) {
-	tests := []struct {
-		name string
-		data []byte
-	}{
-		{"NilData", nil},
-		{"EmptyData", []byte{}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := Sign(tt.data, privateKey)
-			if !errors.Is(err, ErrInvalidParamLength) {
-				t.Errorf("Sign() error = %v, want %v", err, ErrInvalidParamLength)
-			}
-		})
-	}
-}
-
-func TestWrongSignatureLength(t *testing.T) {
-	sig, err := Sign(jwt, privateKey)
-	if err != nil {
-		t.Fatalf("Failed to sign token: %v", err)
-	}
+func TestVerifySignatureRejectsBadSignatureLength(t *testing.T) {
+	sig := mustSign(t, jwt, privateKey)
 
 	smallSig := make([]byte, len(sig)-1)
 	copy(smallSig, sig[:len(sig)-1])
@@ -134,32 +113,8 @@ func TestWrongSignatureLength(t *testing.T) {
 	}
 }
 
-func TestBadPrivateKeyLength(t *testing.T) {
-	tests := []struct {
-		name       string
-		privateKey []byte
-	}{
-		{"NilPrivateKey", nil},
-		{"EmptyPrivateKey", []byte{}},
-		{"SmallPrivateKey", bytes.Repeat([]byte("0"), ed25519.PrivateKeySize-1)},
-		{"LargePrivateKey", bytes.Repeat([]byte("0"), ed25519.PrivateKeySize+1)},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := Sign(jwt, tt.privateKey)
-			if !errors.Is(err, ErrInvalidParamLength) {
-				t.Errorf("Sign() error = %v, want %v", err, ErrInvalidParamLength)
-			}
-		})
-	}
-}
-
-func TestBadPublicKeyLength(t *testing.T) {
-	sig, err := Sign(jwt, privateKey)
-	if err != nil {
-		t.Fatalf("Failed to sign token: %v", err)
-	}
+func TestVerifySignatureRejectsBadPublicKeyLength(t *testing.T) {
+	sig := mustSign(t, jwt, privateKey)
 
 	tests := []struct {
 		name      string
@@ -176,6 +131,46 @@ func TestBadPublicKeyLength(t *testing.T) {
 			_, err := VerifySignature(jwt, sig, tt.publicKey)
 			if !errors.Is(err, ErrInvalidParamLength) {
 				t.Errorf("VerifySignature() error = %v, want %v", err, ErrInvalidParamLength)
+			}
+		})
+	}
+}
+
+func TestSignRejectsEmptyData(t *testing.T) {
+	tests := []struct {
+		name string
+		data []byte
+	}{
+		{"NilData", nil},
+		{"EmptyData", []byte{}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Sign(tt.data, privateKey)
+			if !errors.Is(err, ErrInvalidParamLength) {
+				t.Errorf("Sign() error = %v, want %v", err, ErrInvalidParamLength)
+			}
+		})
+	}
+}
+
+func TestSignRejectsBadPrivateKeyLength(t *testing.T) {
+	tests := []struct {
+		name       string
+		privateKey []byte
+	}{
+		{"NilPrivateKey", nil},
+		{"EmptyPrivateKey", []byte{}},
+		{"SmallPrivateKey", bytes.Repeat([]byte("0"), ed25519.PrivateKeySize-1)},
+		{"LargePrivateKey", bytes.Repeat([]byte("0"), ed25519.PrivateKeySize+1)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Sign(jwt, tt.privateKey)
+			if !errors.Is(err, ErrInvalidParamLength) {
+				t.Errorf("Sign() error = %v, want %v", err, ErrInvalidParamLength)
 			}
 		})
 	}

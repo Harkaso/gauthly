@@ -38,7 +38,7 @@ func startServer(port string) error {
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(StatusResponse{Status: "ok"}); err != nil {
-			log.Printf("Failed to write response: %v\n", err)
+			log.Printf("failed to write response: %v", err)
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 		}
 	})
@@ -46,7 +46,7 @@ func startServer(port string) error {
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(ErrorResponse{Error: "not found"}); err != nil {
-			log.Printf("Failed to write response: %v\n", err)
+			log.Printf("failed to write response: %v", err)
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 		}
 	})
@@ -66,7 +66,7 @@ func run() error {
 	}
 	defer dbPool.Close()
 
-	log.Printf("Server started on : http://localhost:%s\n", cfg.Port)
+	log.Printf("server started on http://localhost%s", cfg.Port)
 	err = startServer(cfg.Port)
 	if err != nil {
 		return err
@@ -78,6 +78,6 @@ func run() error {
 func main() {
 	err := run()
 	if err != nil {
-		log.Fatalf("Failed to run: %v\n", err)
+		log.Fatalf("failed to run: %v", err)
 	}
 }

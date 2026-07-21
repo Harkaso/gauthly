@@ -20,13 +20,22 @@ type APIError struct {
 	Message string
 }
 
-// ErrInternal is the response to a failure the caller can do nothing about. It
+// ErrInternalServer is the response to a failure the caller can do nothing about. It
 // is defined here rather than per package so that every domain reports such a
 // failure identically, and it carries no detail: the cause belongs in the logs.
-var ErrInternal = APIError{
+var ErrInternalServer = APIError{
 	Status:  http.StatusInternalServerError,
 	Code:    "internal_error",
 	Message: "internal error",
+}
+
+// ErrNotFound is the response to a request for a route or resource that does
+// not exist. Like ErrInternalServer, it is shared so that every unmatched
+// request answers identically.
+var ErrNotFound = APIError{
+	Status:  http.StatusNotFound,
+	Code:    "not_found",
+	Message: "not found",
 }
 
 type errorBody struct {
@@ -45,10 +54,7 @@ type errorDetail struct {
 // A failure to encode the body is logged rather than returned,
 // since the status has already been committed by then.
 func WriteError(w http.ResponseWriter, e APIError) {
-	h := w.Header()
-	h.Del("Content-Length")
-	h.Set("Content-Type", "application/json")
-	h.Set("X-Content-Type-Options", "nosniff")
+	writeJSONHeaders(w)
 	w.WriteHeader(e.Status)
 	body := errorBody{Error: errorDetail{Code: e.Code, Message: e.Message}}
 	if err := json.NewEncoder(w).Encode(body); err != nil {

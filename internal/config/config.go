@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/Harkaso/gauthly/internal/tenant"
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 )
@@ -16,8 +17,10 @@ const (
 // Config holds the settings the service needs to start.
 type Config struct {
 	DatabaseURL     string
+	LogFormat       string
 	Port            string
 	DefaultTenantID uuid.UUID
+	TenantMode      tenant.Mode
 }
 
 // Load reads the configuration from the environment. It fails if a required
@@ -31,14 +34,21 @@ func Load() (*Config, error) {
 
 	cfg.DatabaseURL, err = requireString("DB_URL")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("require DB_URL: %w", err)
 	}
+
+	cfg.LogFormat = lookupString("LOG_FORMAT", "text")
 
 	cfg.Port = lookupString("PORT", defaultPort)
 
 	cfg.DefaultTenantID, err = uuid.Parse(lookupString("DEFAULT_TENANT_ID", defaultTenantID))
 	if err != nil {
 		return nil, fmt.Errorf("parse DEFAULT_TENANT_ID: %w", err)
+	}
+
+	cfg.TenantMode, err = tenant.ParseMode(lookupString("TENANT_MODE", "B2B"))
+	if err != nil {
+		return nil, fmt.Errorf("parse TENANT_MODE: %w", err)
 	}
 
 	return cfg, nil

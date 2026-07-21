@@ -5,10 +5,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/Harkaso/gauthly/internal/auth"
 	"github.com/Harkaso/gauthly/internal/config"
+	"github.com/Harkaso/gauthly/internal/platform/httpx"
 	"github.com/Harkaso/gauthly/internal/tenant"
+	"github.com/Harkaso/gauthly/internal/user"
 	"github.com/google/uuid"
 )
 
@@ -17,8 +21,6 @@ var (
 	testDefaultTenantID = uuid.MustParse("00000000-0000-4000-8000-000000000000")
 )
 
-// fakeRepo is a tenant.Repository whose answer is fixed by the test, so the
-// router can be exercised without a database.
 type fakeRepo struct {
 	tenant tenant.Tenant
 	err    error
@@ -28,8 +30,25 @@ func (f fakeRepo) GetByID(context.Context, uuid.UUID) (tenant.Tenant, error) {
 	return f.tenant, f.err
 }
 
-// request runs one request through the assembled router and returns the
-// recorded response. An empty header is not sent at all.
+type fakeUserRepo struct{}
+
+func (fakeUserRepo) Create(context.Context, user.User) error {
+	return nil
+}
+
+func serve(t *testing.T, cfg config.Config, repo tenant.Repository, req *http.Request) *httptest.ResponseRecorder {
+	t.Helper()
+
+	rec := httptest.NewRecorder()
+	args := routerArgs{
+		tenantRepo:  repo,
+		authHandler: auth.NewHandler(auth.NewAuthService(fakeUserRepo{})),
+	}
+	newRouter(cfg, args).ServeHTTP(rec, req)
+
+	return rec
+}
+
 func request(t *testing.T, repo tenant.Repository, mode tenant.Mode, method, target, header string) *httptest.ResponseRecorder {
 	t.Helper()
 
@@ -39,10 +58,7 @@ func request(t *testing.T, repo tenant.Repository, mode tenant.Mode, method, tar
 		req.Header.Set("X-Tenant-ID", header)
 	}
 
-	rec := httptest.NewRecorder()
-	newRouter(cfg, repo).ServeHTTP(rec, req)
-
-	return rec
+	return serve(t, cfg, repo, req)
 }
 
 func TestRouterHealthzNeedsNoTenant(t *testing.T) {
@@ -52,7 +68,7 @@ func TestRouterHealthzNeedsNoTenant(t *testing.T) {
 		t.Errorf("GET /healthz status = %v, want %v", rec.Code, http.StatusOK)
 	}
 
-	var body statusResponse
+	var body httpx.StatusResponse
 	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 		t.Fatalf("Failed to decode response body: %v", err)
 	}
@@ -111,28 +127,23 @@ func TestRouterResolvesTenant(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			rec := request(t, tt.repo, tt.mode, http.MethodGet, "/whoami", tt.header)
+			rec := request(t, tt.repo, tt.mode, http.MethodGet, "/api/v1/whoami", tt.header)
 
 			if rec.Code != tt.wantStatus {
-				t.Errorf("GET /whoami status = %v, want %v", rec.Code, tt.wantStatus)
+				t.Errorf("GET /api/v1/whoami status = %v, want %v", rec.Code, tt.wantStatus)
 			}
 		})
 	}
 }
 
-// TestRouterWhoamiReturnsStoredTenant proves the full chain: the router runs
-// Resolve, which validates the tenant through the repository and places it in
-// the context, where the handler reads it back. The identifier returned is the
-// stored one, never the header, so a client cannot assert a tenant it does not
-// own.
 func TestRouterWhoamiReturnsStoredTenant(t *testing.T) {
 	storedID := uuid.MustParse("22222222-2222-4222-8222-222222222222")
 	repo := fakeRepo{tenant: tenant.Tenant{ID: storedID, IsActive: true}}
 
-	rec := request(t, repo, tenant.B2B, http.MethodGet, "/whoami", testTenantID.String())
+	rec := request(t, repo, tenant.B2B, http.MethodGet, "/api/v1/whoami", testTenantID.String())
 
 	if rec.Code != http.StatusOK {
-		t.Fatalf("GET /whoami status = %v, want %v", rec.Code, http.StatusOK)
+		t.Fatalf("GET /api/v1/whoami status = %v, want %v", rec.Code, http.StatusOK)
 	}
 
 	var body whoamiResponse
@@ -140,8 +151,36 @@ func TestRouterWhoamiReturnsStoredTenant(t *testing.T) {
 		t.Fatalf("Failed to decode response body: %v", err)
 	}
 	if body.TenantID != storedID {
-		t.Errorf("GET /whoami tenant_id = %v, want %v", body.TenantID, storedID)
+		t.Errorf("GET /api/v1/whoami tenant_id = %v, want %v", body.TenantID, storedID)
 	}
+}
+
+func TestRouterRegister(t *testing.T) {
+	activeRepo := fakeRepo{tenant: tenant.Tenant{ID: testTenantID, IsActive: true}}
+	cfg := config.Config{TenantMode: tenant.B2B, DefaultTenantID: testDefaultTenantID}
+	body := `{"email":"user@example.com","password":"correct horse battery"}`
+
+	newReq := func(header string) *http.Request {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", strings.NewReader(body))
+		if header != "" {
+			req.Header.Set("X-Tenant-ID", header)
+		}
+		return req
+	}
+
+	t.Run("ValidRequestUnderTenant", func(t *testing.T) {
+		rec := serve(t, cfg, activeRepo, newReq(testTenantID.String()))
+		if rec.Code != http.StatusAccepted {
+			t.Errorf("POST /api/v1/auth/register status = %v, want %v", rec.Code, http.StatusAccepted)
+		}
+	})
+
+	t.Run("RejectedWithoutTenant", func(t *testing.T) {
+		rec := serve(t, cfg, activeRepo, newReq(""))
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("POST /api/v1/auth/register without a tenant status = %v, want %v", rec.Code, http.StatusBadRequest)
+		}
+	})
 }
 
 func TestNewLogHandler(t *testing.T) {

@@ -6,6 +6,13 @@ import (
 	"net/http"
 )
 
+// StatusResponse is a minimal JSON body carrying a single machine-readable
+// status word, for endpoints that report an outcome without returning a
+// resource.
+type StatusResponse struct {
+	Status string `json:"status"`
+}
+
 func writeJSONHeaders(w http.ResponseWriter) {
 	h := w.Header()
 	h.Del("Content-Length")

@@ -38,6 +38,15 @@ var ErrNotFound = APIError{
 	Message: "not found",
 }
 
+// ErrBadRequest is the response to a request the server cannot parse or that
+// fails a basic input check. Like ErrInternalServer, it is shared so that every
+// domain rejects a malformed request identically.
+var ErrBadRequest = APIError{
+	Status:  http.StatusBadRequest,
+	Code:    "bad_request",
+	Message: "bad request",
+}
+
 type errorBody struct {
 	Error errorDetail `json:"error"`
 }

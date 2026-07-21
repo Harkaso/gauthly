@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/Harkaso/gauthly/internal/auth"
 	"github.com/Harkaso/gauthly/internal/config"
 	"github.com/Harkaso/gauthly/internal/platform/database"
 	"github.com/Harkaso/gauthly/internal/platform/httpx"
@@ -20,12 +21,13 @@ const (
 	ctxTimeout = 20 * time.Second
 )
 
-type statusResponse struct {
-	Status string `json:"status"`
-}
-
 type whoamiResponse struct {
 	TenantID uuid.UUID `json:"tenant_id"`
+}
+
+type routerArgs struct {
+	tenantRepo  tenant.Repository
+	authHandler *auth.Handler
 }
 
 func newLogHandler(format string) slog.Handler {
@@ -42,24 +44,26 @@ func connectDB(connString string) (*pgxpool.Pool, error) {
 	return database.Connect(ctx, connString)
 }
 
-func newRouter(cfg config.Config, repo tenant.Repository) http.Handler {
+func newRouter(cfg config.Config, args routerArgs) http.Handler {
 	r := chi.NewRouter()
 
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		httpx.WriteJSON(w, http.StatusOK, statusResponse{Status: "ok"})
+		httpx.WriteJSON(w, http.StatusOK, httpx.StatusResponse{Status: "ok"})
 	})
 
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, httpx.ErrNotFound)
 	})
 
-	r.Group(func(r chi.Router) {
-		r.Use(tenant.Resolve(repo, cfg.TenantMode, cfg.DefaultTenantID))
+	r.Route("/api/v1", func(r chi.Router) {
+		r.Use(tenant.Resolve(args.tenantRepo, cfg.TenantMode, cfg.DefaultTenantID))
 
 		r.Get("/whoami", func(w http.ResponseWriter, r *http.Request) {
 			id, _ := tenant.FromContext(r.Context())
 			httpx.WriteJSON(w, http.StatusOK, whoamiResponse{TenantID: id})
 		})
+
+		r.Post("/auth/register", args.authHandler.Register)
 	})
 
 	return r
@@ -78,11 +82,17 @@ func run() error {
 	}
 	defer dbPool.Close()
 
-	repo := database.NewTenantRepository(dbPool)
+	tenantRepo := database.NewTenantRepository(dbPool)
+	userRepo := database.NewUserRepository(dbPool)
+	authService := auth.NewAuthService(userRepo)
+	authHandler := auth.NewHandler(authService)
 
 	slog.Info("starting server", "addr", "http://localhost"+cfg.Port)
 
-	return http.ListenAndServe(cfg.Port, newRouter(*cfg, repo))
+	return http.ListenAndServe(cfg.Port, newRouter(*cfg, routerArgs{
+		tenantRepo:  tenantRepo,
+		authHandler: authHandler,
+	}))
 }
 
 func main() {
